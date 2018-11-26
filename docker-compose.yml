@@ -1,0 +1,109 @@
+version: "3"
+
+services:
+  hydra:
+    image: oryd/hydra:${HYDRA_TAG}
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+      - "4446:4446"
+    networks:
+      - hydranet
+    command:
+      serve all --dangerous-force-http
+    depends_on:
+      - hydra-migrate
+      - db
+#     Uncomment the following when configuring tracing
+      - jaeger
+
+    restart: unless-stopped
+    environment:
+      - HYDRA_URL=${HYDRA_URL}
+      - HYDRA_ADMIN_URL=${HYDRA_ADMIN_URL}
+      - DATABASE_URL=postgres://hydra:secret@db:5432/hydra?sslmode=disable
+      - SYSTEM_SECRET=HydraSystemSecret
+      - OAUTH2_ISSUER_URL=${HYDRA_URL}
+      - OAUTH2_CONSENT_URL=${HYDRA_LOGIN_CONSENT_URL}/consent
+      - OAUTH2_LOGIN_URL=${HYDRA_LOGIN_CONSENT_URL}/login
+
+      # This should probably not be exposed, but the value in "/.well-known/openid-configuration" is wrong 
+      # https://github.com/ory/hydra/commit/ddafef543cbb828d8dcb460b7ba5005880db332e
+      - AUTH2_CLIENT_REGISTRATION_URL=${HYDRA_ADMIN_URL}
+
+      - OAUTH2_SHARE_ERROR_DEBUG=1
+      - LOG_LEVEL=debug
+      - OIDC_SUBJECT_TYPES_SUPPORTED=public,pairwise
+      - OIDC_SUBJECT_TYPE_PAIRWISE_SALT=youReallyNeedToChangeThis
+
+#     Uncomment the following lines when configuring tracing
+      - TRACING_PROVIDER=jaeger
+      - TRACING_PROVIDER_JAEGER_SAMPLING_SERVER_URL=http://jaeger:5778/sampling
+      - TRACING_PROVIDER_JAEGER_LOCAL_AGENT_ADDRESS=jaeger:6831
+      - tracing_provider_jaeger_sampling_type=const
+      - TRACING_PROVIDER_JAEGER_SAMPLING_VALUE=1
+
+  consent:
+    image: oryd/hydra-login-consent-node:${HYDRA_CONSENT_TAG}
+    #image: my-login-consent
+    networks:
+      - hydranet
+    ports:
+      - "3000:3000"
+    depends_on:
+      - hydra
+    restart: unless-stopped
+    environment:
+      - HYDRA_URL=${HYDRA_URL}
+      - HYDRA_ADMIN_URL=${HYDRA_ADMIN_URL}
+      - HENRIK=henrik
+      - LOG_LEVEL=debug
+      - DEBUG=*
+
+  hydra-migrate:
+    image: oryd/hydra:${HYDRA_TAG}
+    networks:
+      - hydranet
+    environment:
+      - DATABASE_URL=postgres://hydra:secret@db:5432/hydra?sslmode=disable
+    command:
+      migrate sql -e
+    depends_on:
+      - db
+    restart: on-failure
+    
+# Uncomment the following when configuring tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.7.0
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "9411:9411"
+    networks:
+      - hydranet
+    
+  db:
+    image: postgres:9.6
+    networks:
+      - hydranet
+    environment:
+      - POSTGRES_USER=hydra
+      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=hydra
+    volumes:
+      - postgresql:/var/lib/postgresql
+      # This needs explicit mapping due to https://github.com/docker-library/postgres/blob/4e48e3228a30763913ece952c611e5e9b95c8759/Dockerfile.template#L52
+      - postgresql_data:/var/lib/postgresql/data
+
+networks:
+  hydranet:
+    driver: bridge
+
+volumes:
+
+  postgresql:
+  postgresql_data:
